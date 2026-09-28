@@ -105,6 +105,18 @@ class RenderContext:
         self.lights_cast_shadow: wp.array(dtype=wp.bool) = None
         self.lights_position: wp.array(dtype=wp.vec3f) = None
         self.lights_orientation: wp.array(dtype=wp.vec3f) = None
+        self.lights_color: wp.array(dtype=wp.vec3f) = None  # None = white (1, 1, 1) for every light
+        self.shadow_min_visibility: float = 0.3
+
+        # Hemispheric ambient term (defaults = the original hard-coded values)
+        self.ambient_sky = wp.vec3f(0.4, 0.4, 0.45)
+        self.ambient_ground = wp.vec3f(0.1, 0.1, 0.12)
+        self.ambient_intensity: float = 0.5
+
+        # Optional Blinn-Phong specular per material (x = strength, y = shininess); None = diffuse only
+        self.material_specular: wp.array(dtype=wp.vec2f) = None
+        self.__default_lights_color: wp.array(dtype=wp.vec3f) = None
+        self.__dummy_material_specular: wp.array(dtype=wp.vec2f) = None
 
         self.bvh_shapes_lowers: wp.array(dtype=wp.vec3f) = None
         self.bvh_shapes_uppers: wp.array(dtype=wp.vec3f) = None
@@ -341,6 +353,15 @@ class RenderContext:
                     self.lights_cast_shadow,
                     self.lights_position,
                     self.lights_orientation,
+                    self.__lights_color_or_default(),
+                    float(self.shadow_min_visibility),
+                    # Ambient
+                    wp.vec3f(self.ambient_sky),
+                    wp.vec3f(self.ambient_ground),
+                    float(self.ambient_intensity),
+                    # Specular
+                    self.material_specular is not None,
+                    self.__material_specular_or_dummy(),
                     # Outputs
                     color_image is not None,
                     depth_image is not None,
@@ -355,6 +376,22 @@ class RenderContext:
                 ],
                 device=self.device,
             )
+
+    def __lights_color_or_default(self):
+        if self.lights_color is not None:
+            assert self.lights_color.shape[0] == self.light_count, "lights_color must have one entry per light"
+            return self.lights_color
+        count = max(1, self.light_count)
+        if self.__default_lights_color is None or self.__default_lights_color.shape[0] != count:
+            self.__default_lights_color = wp.full(count, wp.vec3f(1.0), dtype=wp.vec3f, device=self.device)
+        return self.__default_lights_color
+
+    def __material_specular_or_dummy(self):
+        if self.material_specular is not None:
+            return self.material_specular
+        if self.__dummy_material_specular is None:
+            self.__dummy_material_specular = wp.zeros(1, dtype=wp.vec2f, device=self.device)
+        return self.__dummy_material_specular
 
     def __compute_bvh_shape_bounds(self):
         wp.launch(

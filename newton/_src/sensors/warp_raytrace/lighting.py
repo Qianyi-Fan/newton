@@ -48,6 +48,7 @@ def compute_lighting(
     triangle_mesh_id: wp.uint64,
     normal: wp.vec3f,
     hit_point: wp.vec3f,
+    shadow_min_visibility: wp.float32,
 ) -> wp.float32:
     light_contribution = wp.float32(0.0)
 
@@ -78,8 +79,7 @@ def compute_lighting(
     if ndotl == 0.0:
         return light_contribution
 
-    visible = wp.float32(1.0)
-    shadow_min_visibility = wp.float32(0.3)  # reduce shadow darkness (0: full black, 1: no shadow)
+    visible = wp.float32(1.0)  # shadowed pixels keep shadow_min_visibility (0: full black, 1: no shadow)
 
     if enable_shadows and light_cast_shadow:
         # Nudge the origin slightly along the surface normal to avoid
@@ -120,3 +120,16 @@ def compute_lighting(
             visible = shadow_min_visibility
 
     return ndotl * attenuation * visible
+
+
+@wp.func
+def light_direction(
+    light_type: wp.int32,
+    light_position: wp.vec3f,
+    light_orientation: wp.vec3f,
+    hit_point: wp.vec3f,
+) -> wp.vec3f:
+    """Unit vector from the hit point towards the light (same convention as compute_lighting)."""
+    if light_type == 1:  # directional light
+        return wp.normalize(-light_orientation)
+    return wp.normalize(light_position - hit_point)

@@ -156,6 +156,15 @@ def render_megakernel(
     light_cast_shadow: wp.array(dtype=wp.bool),
     light_positions: wp.array(dtype=wp.vec3f),
     light_orientations: wp.array(dtype=wp.vec3f),
+    light_colors: wp.array(dtype=wp.vec3f),
+    shadow_min_visibility: wp.float32,
+    # Ambient (hemispheric sky/ground blend)
+    ambient_sky: wp.vec3f,
+    ambient_ground: wp.vec3f,
+    ambient_intensity: wp.float32,
+    # Specular (Blinn-Phong, per material: x = strength, y = shininess)
+    enable_specular: wp.bool,
+    material_specular: wp.array(dtype=wp.vec2f),
     # Enabled Output
     render_color: wp.bool,
     render_depth: wp.bool,
@@ -292,15 +301,21 @@ def render_megakernel(
         n = closest_hit.normal if len_n > 0.0 else up
         n = wp.normalize(n)
         hemispheric = 0.5 * (wp.dot(n, up) + 1.0)
-        sky = wp.vec3f(0.4, 0.4, 0.45)
-        ground = wp.vec3f(0.1, 0.1, 0.12)
-        ambient_color = sky * hemispheric + ground * (1.0 - hemispheric)
-        ambient_intensity = 0.5
+        ambient_color = ambient_sky * hemispheric + ambient_ground * (1.0 - hemispheric)
         out_color = wp.vec3f(
             base_color[0] * (ambient_color[0] * ambient_intensity),
             base_color[1] * (ambient_color[1] * ambient_intensity),
             base_color[2] * (ambient_color[2] * ambient_intensity),
         )
+
+    spec_strength = wp.float32(0.0)
+    spec_shininess = wp.float32(1.0)
+    if enable_specular and closest_hit.shape_index < ray_cast.MAX_SHAPE_ID:
+        spec_material = shape_materials[closest_hit.shape_index]
+        if spec_material > -1:
+            spec = material_specular[spec_material]
+            spec_strength = spec[0]
+            spec_shininess = spec[1]
 
     # Apply lighting and shadows
     for light_index in range(light_count):
@@ -332,8 +347,22 @@ def render_megakernel(
             triangle_mesh_id,
             closest_hit.normal,
             hit_point,
+            shadow_min_visibility,
         )
-        out_color = out_color + base_color * light_contribution
+        light_color = light_colors[light_index]
+        out_color = out_color + wp.cw_mul(base_color, light_color) * light_contribution
+        if spec_strength > 0.0 and light_contribution > 0.0:
+            L = lighting.light_direction(
+                light_type[light_index], light_positions[light_index], light_orientations[light_index], hit_point
+            )
+            n_s = wp.normalize(closest_hit.normal)
+            ndotl_s = wp.max(wp.dot(n_s, L), 1.0e-6)
+            H = wp.normalize(L - wp.normalize(ray_dir_world))
+            ndoth = wp.max(0.0, wp.dot(n_s, H))
+            # light_contribution = ndotl * attenuation * visibility -> reuse attenuation * visibility
+            out_color = out_color + light_color * (
+                spec_strength * wp.pow(ndoth, spec_shininess) * (light_contribution / ndotl_s)
+            )
 
     out_color = wp.min(wp.max(out_color, wp.vec3f(0.0)), wp.vec3f(1.0))
     out_pixels[out_index] = pack_rgba_to_uint32(out_color, 1.0)
